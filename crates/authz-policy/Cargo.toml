@@ -1,0 +1,23 @@
+[package]
+name = "authz-policy"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PAAC human DSL → Cedar, versioned store, Ed25519 signed bundles"
+
+[dependencies]
+authz-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
+cedar-policy = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+base64 = { workspace = true }
+regex = { workspace = true }
+indexmap = { workspace = true }

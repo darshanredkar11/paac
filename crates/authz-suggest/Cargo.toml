@@ -1,0 +1,15 @@
+[package]
+name = "authz-suggest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PAAC draft policy suggestions from LDAP sync + audit history"
+
+[dependencies]
+authz-core = { workspace = true }
+authz-policy = { workspace = true }
+authz-identity = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+chrono = { workspace = true }

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PAAC Policy Board</title>
+  <style>
+    :root { font-family: ui-sans-serif, system-ui, sans-serif; color: #0f172a; background: #f8fafc; }
+    body { margin: 2rem; max-width: 960px; }
+    h1 { font-size: 1.5rem; }
+    .muted { color: #64748b; }
+    table { border-collapse: collapse; width: 100%; margin-top: 1rem; background: white; }
+    th, td { border: 1px solid #cbd5e1; padding: 0.6rem 0.75rem; text-align: left; font-size: 0.9rem; }
+    th { background: #e2e8f0; }
+    .deny { background: #fee2e2; }
+    .allow { background: #dcfce7; }
+    code { background: #e2e8f0; padding: 0.1rem 0.3rem; border-radius: 4px; }
+  </style>
+</head>
+<body>
+  <h1>PAAC Policy Board</h1>
+  <p class="muted">Role × resource matrix. LLM interprets intent; only the policy engine grants authority.</p>
+  <p><button id="refresh">Refresh matrix</button></p>
+  <div id="matrix">Loading…</div>
+  <script>
+    async function load() {
+      const res = await fetch('/v1/board/matrix');
+      const data = await res.json();
+      let html = '<table><thead><tr><th>Role</th>';
+      for (const r of data.resources) html += `<th>${r}</th>`;
+      html += '</tr></thead><tbody>';
+      for (const role of data.roles) {
+        html += `<tr><th>${role}</th>`;
+        for (const resource of data.resources) {
+          const cell = data.cells.find(c => c.role === role && c.resource === resource);
+          const summary = cell ? cell.effect_summary : 'DENY (default)';
+          const cls = summary.includes('Allow') || summary.includes('allow') ? 'allow' :
+                      summary.includes('Deny') || summary.includes('DENY') ? 'deny' : '';
+          html += `<td class="${cls}"><code>${summary}</code></td>`;
+        }
+        html += '</tr>';
+      }
+      html += '</tbody></table>';
+      document.getElementById('matrix').innerHTML = html;
+    }
+    document.getElementById('refresh').onclick = load;
+    load();
+  </script>
+</body>
+</html>

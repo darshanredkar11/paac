@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo test
+        run: cargo test --workspace
+      - name: cargo clippy
+        run: cargo clippy --workspace -- -D warnings
+      - name: CEO DENY demo smoke
+        run: |
+          cp examples/policies/hr_travel.dsl data/policies/active.dsl
+          cargo build -p authz-cli
+          ./target/debug/authz policy validate
+          ./target/debug/authz policy commit -m "ci bootstrap"
+          ./target/debug/authz policy sign
+          ./target/debug/authz policy deploy
+          set +e
+          ./target/debug/authz check \
+            --principal user:hr-head \
+            --role HR_HEAD \
+            --action READ \
+            --resource TRAVEL_EXPENSE \
+            --subject employee:CEO \
+            --subject-group EXECUTIVE \
+            --direct-report employee:alice
+          code=$?
+          set -e
+          test "$code" -eq 2

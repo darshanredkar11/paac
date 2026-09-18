@@ -1,0 +1,19 @@
+[package]
+name = "authz-identity"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PAAC identity model + local, JWT/OIDC, LDAP adapters"
+
+[dependencies]
+authz-core = { workspace = true }
+authz-policy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+jsonwebtoken = { workspace = true }
+chrono = { workspace = true }
+indexmap = { workspace = true }
+uuid = { workspace = true }

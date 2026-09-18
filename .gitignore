@@ -1,0 +1,10 @@
+/target
+data/keys/
+data/audit/
+data/policies/revisions/
+data/policies/deployed/
+data/policies/HEAD
+data/policies/drafts/
+data/identity/snapshot.json
+*.swp
+.DS_Store

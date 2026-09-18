@@ -1,0 +1,54 @@
+{
+  "users": [
+    {
+      "id": "user:hr-head",
+      "display_name": "Alex HR",
+      "email": "hr@example.com",
+      "source": "fixture",
+      "roles": ["HR_HEAD"],
+      "groups": ["HR"],
+      "attrs": {}
+    },
+    {
+      "id": "employee:CEO",
+      "display_name": "Casey CEO",
+      "email": "ceo@example.com",
+      "source": "fixture",
+      "roles": ["CEO"],
+      "groups": ["EXECUTIVE"],
+      "attrs": {}
+    },
+    {
+      "id": "employee:alice",
+      "display_name": "Alice Engineer",
+      "email": "alice@example.com",
+      "source": "fixture",
+      "roles": ["ENGINEER"],
+      "groups": ["ENGINEERING"],
+      "attrs": {}
+    }
+  ],
+  "groups": [
+    {
+      "id": "EXECUTIVE",
+      "name": "EXECUTIVE",
+      "members": ["employee:CEO"],
+      "source": "fixture"
+    },
+    {
+      "id": "HR",
+      "name": "HR",
+      "members": ["user:hr-head"],
+      "source": "fixture"
+    }
+  ],
+  "relationships": [
+    {
+      "kind": "direct_reports",
+      "from": "user:hr-head",
+      "to": "employee:alice",
+      "source": "fixture"
+    }
+  ],
+  "synced_at": null
+}

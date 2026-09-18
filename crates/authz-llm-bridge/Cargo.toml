@@ -1,0 +1,17 @@
+[package]
+name = "authz-llm-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "NL → AuthzRequest trait + mock provider (never evaluates policy)"
+
+[dependencies]
+authz-core = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+async-trait = { workspace = true }
+indexmap = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true }

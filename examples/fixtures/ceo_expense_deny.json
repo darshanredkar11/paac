@@ -1,0 +1,26 @@
+{
+  "principal": {
+    "id": "user:hr-head",
+    "roles": ["HR_HEAD"],
+    "groups": ["HR"],
+    "attrs": {}
+  },
+  "action": { "name": "READ" },
+  "resource": { "kind": "TRAVEL_EXPENSE", "id": null, "attrs": {} },
+  "subject": {
+    "id": "employee:CEO",
+    "kind": "Employee",
+    "groups": ["EXECUTIVE"],
+    "attrs": {}
+  },
+  "context": { "time_range": "LAST_WEEK" },
+  "relationships": [
+    {
+      "kind": "direct_reports",
+      "from": "user:hr-head",
+      "to": "employee:alice"
+    }
+  ],
+  "acting_as": "agent:enterprise-assistant",
+  "on_behalf_of": "user:hr-head"
+}

@@ -1,0 +1,24 @@
+[package]
+name = "authz-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "PAAC CLI binary `authz`"
+
+[[bin]]
+name = "authz"
+path = "src/main.rs"
+
+[dependencies]
+authz-core = { workspace = true }
+authz-policy = { workspace = true }
+authz-identity = { workspace = true }
+authz-suggest = { workspace = true }
+authz-llm-bridge = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true }
+hex = { workspace = true }
+indexmap = { workspace = true }

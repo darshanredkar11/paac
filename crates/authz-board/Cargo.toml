@@ -1,0 +1,11 @@
+[package]
+name = "authz-board"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Minimal policy board static assets + matrix API helpers"
+
+[dependencies]
+authz-policy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
