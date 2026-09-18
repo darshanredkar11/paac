@@ -15,6 +15,7 @@ use authz_policy::{
     LocalEd25519Signer, PolicyStore, SigningKeyPair,
 };
 use authz_suggest::{suggest_from_audit, suggest_from_snapshot, write_suggestions, append_audit};
+use authz_catalog::{load_catalog, validate_catalog};
 use clap::{Parser, Subcommand};
 use indexmap::IndexMap;
 
@@ -79,6 +80,35 @@ enum Commands {
     },
     /// Suggest draft policies from sync/audit
     Suggest,
+    /// Validate resource catalog
+    Catalog {
+        #[command(subcommand)]
+        cmd: CatalogCmd,
+    },
+    /// Run the LLM authorization proxy
+    Proxy {
+        #[command(subcommand)]
+        cmd: ProxyCmd,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum CatalogCmd {
+    Validate {
+        #[arg(long, default_value = "data/catalog/company_resources.yaml")]
+        file: PathBuf,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum ProxyCmd {
+    /// Print how to run paac-proxy (binary from authz-llm-proxy)
+    Run {
+        #[arg(long, default_value = "paac.toml")]
+        config: PathBuf,
+        #[arg(long)]
+        listen: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -167,6 +197,21 @@ async fn main() -> Result<()> {
         }
         Commands::Explain { decision_id } => explain_cmd(&paths, &decision_id)?,
         Commands::Suggest => suggest_cmd(&paths).await?,
+        Commands::Catalog { cmd } => match cmd {
+            CatalogCmd::Validate { file } => {
+                let cat = load_catalog(&file).map_err(|e| anyhow::anyhow!(e))?;
+                validate_catalog(&cat).map_err(|e| anyhow::anyhow!(e))?;
+                println!("OK: catalog {} ({} resources, {} tools)", file.display(), cat.resources.len(), cat.tools.len());
+            }
+        },
+        Commands::Proxy { cmd } => match cmd {
+            ProxyCmd::Run { config, listen } => {
+                println!("Start the gateway with:");
+                let listen_flag = listen.map(|l| format!(" --listen {l}")).unwrap_or_default();
+                println!("  cargo run -p authz-llm-proxy -- --config {}{}", config.display(), listen_flag);
+                println!("Or: ./target/release/paac-proxy --config {}{}", config.display(), listen_flag);
+            }
+        },
     }
     Ok(())
 }
@@ -177,12 +222,76 @@ async fn identity_sync(cli: &Paths, source: &str, drafts: bool) -> Result<()> {
             let adapter = LdapAdapter::mock_demo();
             adapter.sync().await?
         }
+        "ad" | "active_directory" => {
+            use authz_identity::{ActiveDirectoryAdapter, ActiveDirectoryConfig, IdpAdapter};
+            let adapter = ActiveDirectoryAdapter {
+                config: ActiveDirectoryConfig {
+                    url: "ldap://localhost:389".into(),
+                    bind_dn: "cn=admin,dc=example,dc=com".into(),
+                    bind_password: "admin".into(),
+                    base_dn: "dc=example,dc=com".into(),
+                    mock: true,
+                },
+            };
+            let snap = adapter.sync().await?;
+            if drafts {
+                let dsl = adapter.draft_policies(&snap);
+                let store = PolicyStore::open(&cli.policy_dir)?;
+                store.write_draft("ad-sync", &dsl)?;
+                println!("wrote DRAFT policies drafts/ad-sync.dsl");
+            }
+            snap
+        }
+        "entra" | "entra_id" => {
+            use authz_identity::{EntraConfig, EntraIdAdapter, IdpAdapter};
+            let adapter = EntraIdAdapter {
+                config: EntraConfig {
+                    tenant_id: "demo".into(),
+                    client_id: "demo".into(),
+                    client_secret: String::new(),
+                    graph_base: "https://graph.microsoft.com/v1.0".into(),
+                    mock: true,
+                },
+                mock_users: None,
+                mock_groups: None,
+            };
+            let snap = adapter.sync().await?;
+            if drafts {
+                let dsl = adapter.draft_policies(&snap);
+                let store = PolicyStore::open(&cli.policy_dir)?;
+                store.write_draft("entra-sync", &dsl)?;
+                println!("wrote DRAFT policies drafts/entra-sync.dsl");
+            }
+            snap
+        }
+        "cognito" => {
+            use authz_identity::{CognitoAdapter, CognitoConfig, IdpAdapter};
+            let adapter = CognitoAdapter {
+                config: CognitoConfig {
+                    region: "us-east-1".into(),
+                    user_pool_id: "demo".into(),
+                    access_key_id: String::new(),
+                    secret_access_key: String::new(),
+                    mock: true,
+                    mock_endpoint: None,
+                },
+                mock_payload: None,
+            };
+            let snap = adapter.sync().await?;
+            if drafts {
+                let dsl = adapter.draft_policies(&snap);
+                let store = PolicyStore::open(&cli.policy_dir)?;
+                store.write_draft("cognito-sync", &dsl)?;
+                println!("wrote DRAFT policies drafts/cognito-sync.dsl");
+            }
+            snap
+        }
         "local" => {
             let path = cli.identity_dir.join("fixtures.json");
             let adapter = LocalFixtureAdapter::new(path);
             adapter.sync().await?
         }
-        other => bail!("unknown identity source: {other} (use ldap|local)"),
+        other => bail!("unknown identity source: {other} (use ldap|ad|entra|cognito|local)"),
     };
     std::fs::create_dir_all(&cli.identity_dir)?;
     let out = cli.identity_dir.join("snapshot.json");

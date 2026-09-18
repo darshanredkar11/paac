@@ -5,39 +5,47 @@ members = [
     "crates/authz-policy",
     "crates/authz-identity",
     "crates/authz-suggest",
+    "crates/authz-catalog",
     "crates/authz-gateway",
     "crates/authz-cli",
     "crates/authz-board",
     "crates/authz-llm-bridge",
+    "crates/authz-llm-proxy",
+    "crates/authz-store",
 ]
 default-members = [
     "crates/authz-core",
     "crates/authz-policy",
     "crates/authz-identity",
     "crates/authz-suggest",
+    "crates/authz-catalog",
     "crates/authz-gateway",
     "crates/authz-cli",
     "crates/authz-board",
     "crates/authz-llm-bridge",
+    "crates/authz-llm-proxy",
+    "crates/authz-store",
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["PAAC Contributors"]
 repository = "https://github.com/example/paac"
-description = "Portable Agent Authorization Control Plane"
+description = "PAAC — LLM Authorization Gateway for company RBAC"
 
 [workspace.dependencies]
 authz-core = { path = "crates/authz-core" }
 authz-policy = { path = "crates/authz-policy" }
 authz-identity = { path = "crates/authz-identity" }
 authz-suggest = { path = "crates/authz-suggest" }
+authz-catalog = { path = "crates/authz-catalog" }
 authz-board = { path = "crates/authz-board" }
 authz-llm-bridge = { path = "crates/authz-llm-bridge" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_yaml = "0.9"
 thiserror = "2"
 anyhow = "1"
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -48,7 +56,7 @@ rand = "0.8"
 sha2 = "0.10"
 hex = "0.4"
 base64 = "0.22"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 axum = { version = "0.8", features = ["macros"] }
 tokio = { version = "1", features = ["full"] }
 tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
@@ -59,3 +67,15 @@ async-trait = "0.1"
 parking_lot = "0.12"
 indexmap = { version = "2", features = ["serde"] }
 regex = "1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+toml = "0.8"
+ldap3 = { version = "0.11", default-features = false, features = ["tls-rustls"] }
+bytes = "1"
+futures-util = "0.3"
+http-body-util = "0.1"
+tower = "0.5"
+
+authz-store = { path = "crates/authz-store" }
+arc-swap = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+

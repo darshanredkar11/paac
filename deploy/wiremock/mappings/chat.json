@@ -1,0 +1,18 @@
+{
+  "request": { "method": "POST", "urlPath": "/v1/chat/completions" },
+  "response": {
+    "status": 200,
+    "headers": { "Content-Type": "application/json" },
+    "jsonBody": {
+      "id": "chatcmpl-mock",
+      "object": "chat.completion",
+      "choices": [
+        {
+          "index": 0,
+          "message": { "role": "assistant", "content": "Hello from mock upstream LLM." },
+          "finish_reason": "stop"
+        }
+      ]
+    }
+  }
+}

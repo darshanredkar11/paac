@@ -3,7 +3,7 @@ name = "authz-identity"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "PAAC identity model + local, JWT/OIDC, LDAP adapters"
+description = "PAAC identity: local fixtures, JWT/JWKS, LDAP bind+search, short-lived cache"
 
 [dependencies]
 authz-core = { workspace = true }
@@ -17,3 +17,9 @@ jsonwebtoken = { workspace = true }
 chrono = { workspace = true }
 indexmap = { workspace = true }
 uuid = { workspace = true }
+base64 = { workspace = true }
+parking_lot = { workspace = true }
+reqwest = { workspace = true }
+ldap3 = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

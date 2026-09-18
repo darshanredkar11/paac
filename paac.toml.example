@@ -1,0 +1,35 @@
+# PAAC LLM Authorization Gateway — company configuration
+# Copy to paac.toml and set PAAC_* env overrides as needed.
+
+listen = "0.0.0.0:8080"
+mode = "development"          # development | production
+require_signed_bundle = true  # forced true in production
+policy_dir = "data/policies"
+catalog_path = "data/catalog/company_resources.yaml"
+audit_path = "data/audit/decisions.jsonl"
+identity_dir = "data/identity"
+
+[upstream]
+# Point at vLLM / Ollama (OpenAI shim) / LiteLLM / any OpenAI-compatible base.
+base_url = "http://127.0.0.1:8000"
+api_key = ""
+timeout_secs = 120
+
+[identity]
+# Prefer JWT roles over spoofable headers. Production disables header identity.
+jwt_hmac_secret = "change-me-in-prod"
+# jwks_url = "https://login.microsoftonline.com/<tenant>/discovery/v2.0/keys"
+prefer_jwt_roles = true
+allow_header_identity = true   # forced false in production
+cache_ttl_secs = 300
+
+[identity.ldap]
+url = "ldap://127.0.0.1:389"
+bind_dn = "cn=admin,dc=example,dc=com"
+bind_password = "admin"
+base_dn = "dc=example,dc=com"
+mock = true                    # set false for real LDAP bind+search
+
+[connectors]
+execute_tools = false
+# http_base_url = "http://127.0.0.1:9100"

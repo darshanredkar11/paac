@@ -1,0 +1,78 @@
+version: "1.0"
+resources:
+  - id: db.hr.employees
+    kind: DB_TABLE
+    name: employees
+    department: HR
+    sensitivity: PII
+    attrs:
+      database: hr_prod
+  - id: db.hr.travel_expenses
+    kind: TRAVEL_EXPENSE
+    name: travel_expenses
+    department: HR
+    sensitivity: CONFIDENTIAL
+    attrs:
+      database: hr_prod
+  - id: db.finance.ledger
+    kind: DB_TABLE
+    name: ledger
+    department: FINANCE
+    sensitivity: CONFIDENTIAL
+    attrs:
+      database: finance_prod
+  - id: db.finance.executive_comp
+    kind: DB_TABLE
+    name: executive_comp
+    department: FINANCE
+    sensitivity: PII
+    attrs:
+      database: finance_prod
+  - id: db.customer.profiles
+    kind: DB_TABLE
+    name: customer_profiles
+    department: CUSTOMER
+    sensitivity: PII
+    attrs:
+      database: crm_prod
+  - id: vec.hr.policies
+    kind: VECTOR_COLLECTION
+    name: hr_policies
+    department: HR
+    sensitivity: INTERNAL
+  - id: vec.finance.filings
+    kind: VECTOR_COLLECTION
+    name: finance_filings
+    department: FINANCE
+    sensitivity: CONFIDENTIAL
+  - id: api.export.payroll
+    kind: SALARY
+    name: payroll_export
+    department: PAYROLL
+    sensitivity: PII
+  - id: employee.self_profile
+    kind: EMPLOYEE_PROFILE
+    name: self_profile
+    department: HR
+    sensitivity: INTERNAL
+
+tools:
+  - tool_name: sql_query
+    action: TOOL_INVOKE
+    resource_kind: DB_TABLE
+    resource_id_arg: table
+  - tool_name: read_travel_expense
+    action: READ
+    resource_kind: TRAVEL_EXPENSE
+    resource_id_arg: expense_id
+  - tool_name: export_payroll
+    action: EXPORT
+    resource_kind: SALARY
+  - tool_name: retrieve_docs
+    action: READ
+    resource_kind: VECTOR_COLLECTION
+    resource_id_arg: collection
+  - tool_name: get_employee_profile
+    action: READ
+    resource_kind: EMPLOYEE_PROFILE
+    resource_id_arg: employee_id

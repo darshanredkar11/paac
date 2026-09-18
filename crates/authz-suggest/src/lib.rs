@@ -1,6 +1,7 @@
 //! Propose draft policies from identity sync + audit history. Humans commit.
 
-use std::fs;
+mod audit;
+
 use std::path::Path;
 
 use authz_core::{AuthzDecision, DecisionEffect};
@@ -8,6 +9,11 @@ use authz_identity::{IdentitySnapshot, LdapAdapter};
 use authz_policy::PolicyStore;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+pub use audit::{
+    append_audit, append_audit_record, find_decision, read_audit_records, recent_decisions,
+    AuditRecord,
+};
 
 #[derive(Debug, Error)]
 pub enum SuggestError {
@@ -34,38 +40,27 @@ pub fn suggest_from_snapshot(snapshot: &IdentitySnapshot) -> Vec<Suggestion> {
 }
 
 pub fn suggest_from_audit(audit_path: impl AsRef<Path>) -> Result<Vec<Suggestion>, SuggestError> {
-    let path = audit_path.as_ref();
-    if !path.exists() {
-        return Ok(vec![]);
-    }
-    let data = fs::read_to_string(path)?;
-    let mut denies: Vec<AuthzDecision> = Vec::new();
-    for line in data.lines() {
-        if line.trim().is_empty() {
-            continue;
-        }
-        if let Ok(d) = serde_json::from_str::<AuthzDecision>(line) {
-            if d.effect == DecisionEffect::Deny {
-                denies.push(d);
-            }
-        }
-    }
-
-    // Heuristic: repeated DENY on same action/resource → suggest explicit deny policy
+    let records = read_audit_records(audit_path)?;
     use std::collections::HashMap;
     let mut counts: HashMap<(String, String), usize> = HashMap::new();
-    for d in &denies {
-        let key = (
-            d.evidence.request.action.name.to_ascii_uppercase(),
-            d.evidence.request.resource.kind.to_ascii_uppercase(),
-        );
-        *counts.entry(key).or_default() += 1;
+    for r in &records {
+        if r.decision == DecisionEffect::Deny {
+            let key = (
+                r.action.to_ascii_uppercase(),
+                r.resource.to_ascii_uppercase(),
+            );
+            *counts.entry(key).or_default() += 1;
+        }
     }
 
     let mut out = Vec::new();
     for ((action, resource), n) in counts {
         if n >= 2 {
-            let name = format!("audit_deny_{}_{}", action.to_ascii_lowercase(), resource.to_ascii_lowercase());
+            let name = format!(
+                "audit_deny_{}_{}",
+                action.to_ascii_lowercase(),
+                resource.to_ascii_lowercase()
+            );
             let dsl = format!(
                 "policy \"{name}\"\ndeny {action} {resource}\n# suggested from {n} audit DENY events\n"
             );
@@ -93,15 +88,10 @@ pub fn write_suggestions(
     Ok(written)
 }
 
-pub fn append_audit(path: impl AsRef<Path>, decision: &AuthzDecision) -> Result<(), SuggestError> {
-    use std::io::Write;
-    if let Some(parent) = path.as_ref().parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let mut f = fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
-    writeln!(f, "{}", serde_json::to_string(decision).unwrap())?;
-    Ok(())
+/// Legacy helper kept for callers that still pass AuthzDecision lines.
+pub fn load_legacy_decisions(path: impl AsRef<Path>) -> Result<Vec<AuthzDecision>, SuggestError> {
+    Ok(read_audit_records(path)?
+        .into_iter()
+        .map(|r| r.decision_full)
+        .collect())
 }

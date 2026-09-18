@@ -125,3 +125,24 @@ pub fn verify_bundle(
         .map_err(|e| PolicyError::Crypto(e.to_string()))?;
     Ok(vk.verify(message.as_bytes(), &sig).is_ok())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sign_and_verify_roundtrip() {
+        let (signer, _) = LocalEd25519Signer::generate("k");
+        let bundle = sign_bundle(
+            &signer,
+            "rev1",
+            "permit(principal, action, resource);",
+            "dsl",
+        )
+        .unwrap();
+        assert!(verify_bundle(&bundle, &signer.verifying_key_bytes()).unwrap());
+        let mut bad2 = bundle.clone();
+        bad2.cedar = "forbid(principal, action, resource);".into();
+        assert!(!verify_bundle(&bad2, &signer.verifying_key_bytes()).unwrap());
+    }
+}

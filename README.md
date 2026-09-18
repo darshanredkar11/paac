@@ -1,113 +1,132 @@
-# paac — Portable Agent Authorization Control Plane
+# PAAC — LLM Authorization Gateway
 
-Vendor-neutral authorization layer for AI agents. **The LLM interprets; a deterministic policy engine alone grants `ALLOW` | `DENY` | `REVIEW`.**
+**Company product** for self-hosted LLMs sitting on production data.
 
-Huge integration surface. Tiny trust core.
+Natural-language questions and tool/retrieval calls must not reach prod data until a **deterministic Cedar policy engine** returns `ALLOW`. The LLM never grants authority. Fail closed.
 
-## Quickstart (CEO expense DENY demo)
-
-```bash
-# from repo root
-cargo build -p authz-cli
-
-# load example policies
-cp examples/policies/hr_travel.dsl data/policies/active.dsl
-
-# validate → commit → sign → deploy
-./target/debug/authz policy validate
-./target/debug/authz policy commit -m "Restrict executive expenses"
-./target/debug/authz policy sign
-./target/debug/authz policy deploy
-
-# Head of HR asks: "How much did the CEO spend on trips last week?"
-./target/debug/authz check \
-  --principal user:hr-head \
-  --role HR_HEAD \
-  --action READ \
-  --resource TRAVEL_EXPENSE \
-  --subject employee:CEO \
-  --subject-group EXECUTIVE \
-  --direct-report employee:alice
+```
+Client (chat UI / app)
+  → paac-proxy  (OpenAI-compatible /v1/chat/completions, /v1/retrieve, MCP & A2A hooks)
+      1. Authenticate principal (JWT / JWKS; headers only in development)
+      2. Normalize identity (LDAP / AD / Entra ID / Cognito cache)
+      3. NL → AuthzRequest proposal (structured extraction + resource catalog)
+      4. Evaluate signed policy bundle (deny-by-default, ArcSwap hot cache)
+      5. DENY → structured refusal + audit evidence (never call data connectors)
+      6. ALLOW → forward to upstream LLM; re-check every tool_call before execution
+  → Upstream self-hosted LLM (vLLM / Ollama / LiteLLM / OpenAI-compatible)
+  → Data/tool connectors (only after ALLOW)
 ```
 
-Expected: **`DECISION: Deny`** with `policy_revision` and matched `executive_expense` evidence. Exit code `2`.
-
-Natural-language path (mock llm-bridge constructs the request; engine still decides):
+## Quick deploy in front of your LLM
 
 ```bash
-./target/debug/authz check \
-  --principal user:hr-head \
-  --role HR_HEAD \
-  --action READ \
-  --resource TRAVEL_EXPENSE \
-  --nl "How much did the CEO spend on trips last week?"
+cp paac.toml.example paac.toml
+# set upstream.base_url to your vLLM/Ollama/LiteLLM OpenAI base (no trailing /v1 needed beyond config)
+export PAAC_UPSTREAM_URL=http://127.0.0.1:8000
+export PAAC_JWT_SECRET=your-hs256-secret
+export PAAC_MODE=production   # rejects unsigned bundles + spoofable headers
+
+# Policy lifecycle (human commit)
+cp examples/policies/llm_data_rbac.dsl data/policies/active.dsl
+cargo run -p authz-cli -- policy validate
+cargo run -p authz-cli -- policy commit -m "company LLM RBAC v1"
+cargo run -p authz-cli -- policy sign
+cargo run -p authz-cli -- policy deploy
+
+cargo run -p authz-llm-proxy -- --config paac.toml --listen 0.0.0.0:8080
 ```
 
-## LDAP / mock identity → draft policies
+Point your chat UI at `http://paac-host:8080/v1` instead of the LLM.
+
+### Demo: DENY (CEO expenses)
 
 ```bash
-./target/debug/authz identity sync ldap --drafts
-./target/debug/authz suggest
-ls data/policies/drafts/
-```
-
-Drafts are **never auto-deployed**. Humans validate, commit, sign, deploy.
-
-## HTTP gateway smoke test
-
-```bash
-cargo build -p authz-gateway
-./target/debug/authz-gateway --listen 127.0.0.1:8080 &
-curl -s http://127.0.0.1:8080/health
-curl -s http://127.0.0.1:8080/v1/check \
+curl -s http://127.0.0.1:8080/v1/chat/completions \
   -H 'content-type: application/json' \
-  -d @examples/fixtures/ceo_expense_deny.json | jq .
-# board UI
-open http://127.0.0.1:8080/v1/board   # or browse that URL
+  -H 'x-paac-user: user:hr-head' -H 'x-paac-roles: HR_HEAD' \
+  -d '{"model":"local","messages":[{"role":"user","content":"How much did the CEO spend on trips last week?"}]}'
+# → HTTP 403, error.code=paac_deny, decision_id for `authz explain`
 ```
+
+### Demo: ALLOW (direct report)
+
+```bash
+curl -s http://127.0.0.1:8080/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -H 'x-paac-user: user:hr-head' -H 'x-paac-roles: HR_HEAD' \
+  -d '{"model":"local","messages":[{"role":"user","content":"show alice travel expenses"}]}'
+```
+
+Production identity: `Authorization: Bearer <JWT>` with `roles`/`groups` claims (HMAC or JWKS).
 
 ## Crate map
 
 | Crate | Role |
 |-------|------|
-| `authz-core` | `AuthzRequest`, Cedar evaluator wrapper, evidence, deny-by-default |
-| `authz-policy` | Human DSL → Cedar, validate, versioned store, Ed25519 signed bundles |
-| `authz-identity` | Identity model + local fixtures + JWT/OIDC normalize + LDAP (mock) adapter |
-| `authz-suggest` | Draft suggestions from LDAP sync + audit history |
-| `authz-gateway` | Axum HTTP: `POST /v1/check`, `GET /v1/explain/{id}`, health, board |
-| `authz-cli` | Binary `authz` — identity, policy lifecycle, check, explain, suggest |
-| `authz-board` | Minimal static matrix UI (served by gateway) |
-| `authz-llm-bridge` | NL → `AuthzRequest` trait + mock provider (**never** evaluates policy) |
+| `authz-core` | Embeddable kernel: newtypes, builders, Cedar eval, ArcSwap `BundleCache` |
+| `authz-policy` | DSL → Cedar, Ed25519 signed bundles (content digest + verify) |
+| `authz-identity` | LDAP (live+mock), AD, Entra ID, Cognito, JWT/JWKS, identity cache, draft generators |
+| `authz-catalog` | YAML/JSON resource + tool→resource mappings |
+| `authz-llm-bridge` | NL structured extraction → AuthzRequest **proposal only** |
+| `authz-store` | SQLite: audit buffer, evidence index, identity/policy metadata |
+| `authz-llm-proxy` | Binary `paac-proxy` — OpenAI proxy, MCP/A2A hooks, connectors |
+| `authz-gateway` | Lightweight check/explain/board HTTP (still available) |
+| `authz-cli` | `authz` — policy lifecycle, identity sync, catalog validate, proxy run helper |
+| `authz-board` | Policy board UI: matrix + live audit + explain |
+| `authz-suggest` | Draft suggestions + JSONL audit helpers |
 
-## Design locks
+## Identity sync → draft policies
 
-1. Small human DSL → Amazon Cedar (`cedar-policy`). Deny-by-default.
-2. Relationships: `manager_of`, `direct_reports`, group membership, delegation.
-3. NL only for request construction (`authz-llm-bridge`), never policy eval.
-4. Canonical request: principal, action, resource, subject, context, relationships, `acting_as` / `on_behalf_of`.
-5. CLI primary; minimal web board.
-6. Identity: fixtures, JWT claims normalize, LDAP sync that generates **DRAFT** policies only.
-7. `authz-suggest` proposes drafts; humans commit.
-8. Ed25519 signed policy bundles; local key for MVP; `BundleSigner` trait is KMS-friendly.
+```bash
+cargo run -p authz-cli -- identity sync ldap --drafts
+cargo run -p authz-cli -- identity sync entra --drafts
+cargo run -p authz-cli -- identity sync cognito --drafts
+cargo run -p authz-cli -- identity sync ad --drafts
+# Drafts are NEVER auto-deployed. Humans validate → commit → sign → deploy.
+```
 
-## Policy DSL examples
+## Performance notes
 
-See `examples/policies/hr_travel.dsl`.
+- Authz hot path: in-memory Cedar `PolicySet` behind `arc_swap::ArcSwap` (no lock on check).
+- No LLM on the authorization critical path (extraction is deterministic regex/heuristics; optional LLM proposal must be revalidated).
+- SQLite audit writes are buffered on a background thread; checks do not wait on fsync.
+- Target: sub-millisecond p50 local eval for typical bundles; document p99 under load in your environment with `/metrics`.
+
+## Fail-closed checklist (production)
+
+- [ ] `mode = "production"`
+- [ ] Signed policy bundle deployed; `/ready` shows `signed: true`
+- [ ] JWT secret or JWKS configured; header identity disabled
+- [ ] Upstream LLM only reachable via `paac-proxy`
+- [ ] Catalog covers tools + tables/collections used by agents
+- [ ] Audit SQLite/JSONL retained for evidence
+- [ ] Chat UI base URL points at PAAC, not the model
+
+## Ops
+
+- `docker-compose.prod.yml` — proxy + WireMock LLM (+ optional OpenLDAP profile)
+- `deploy/systemd/paac-proxy.service`
+- Health: `GET /health` · Ready: `GET /ready` · Metrics: `GET /metrics`
+- Board: `GET /v1/board`
+
+## Embeddable SDK-ish usage
+
+```rust
+use authz_core::{evaluate, AuthzRequestBuilder, BundleCache, HotBundle};
+
+let req = AuthzRequestBuilder::new()
+    .principal("user:hr-head", vec!["HR_HEAD".into()])?
+    .action("READ")?
+    .resource_kind("TRAVEL_EXPENSE")?
+    .subject("employee:CEO", vec!["EXECUTIVE".into()])?
+    .build()?;
+let decision = evaluate(&req, &bundle_cache.evaluator_config())?;
+```
 
 ## Tests
 
 ```bash
 cargo test --workspace
-./target/debug/authz policy test
 ```
 
-## Optional OpenLDAP
-
-```bash
-docker compose up -d
-# MVP uses mock LDAP by default; point a future live adapter at localhost:389
-```
-
-## License
-
-MIT OR Apache-2.0
+Includes proxy integration tests with a mock upstream LLM: NL DENY without data access, authorized upstream call, tool_call filtering, production header spoof rejection, concurrent checks.

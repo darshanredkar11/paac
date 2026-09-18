@@ -2,48 +2,126 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PAAC Policy Board</title>
   <style>
-    :root { font-family: ui-sans-serif, system-ui, sans-serif; color: #0f172a; background: #f8fafc; }
-    body { margin: 2rem; max-width: 960px; }
-    h1 { font-size: 1.5rem; }
-    .muted { color: #64748b; }
-    table { border-collapse: collapse; width: 100%; margin-top: 1rem; background: white; }
-    th, td { border: 1px solid #cbd5e1; padding: 0.6rem 0.75rem; text-align: left; font-size: 0.9rem; }
-    th { background: #e2e8f0; }
-    .deny { background: #fee2e2; }
-    .allow { background: #dcfce7; }
-    code { background: #e2e8f0; padding: 0.1rem 0.3rem; border-radius: 4px; }
+    :root {
+      --bg: #0b1220; --panel: #111827; --border: #1f2937; --text: #e5e7eb;
+      --muted: #9ca3af; --allow: #14532d; --deny: #7f1d1d; --accent: #38bdf8;
+      --chip: #1e293b; font-family: ui-sans-serif, system-ui, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--bg); color: var(--text); }
+    header { padding: 1.25rem 1.5rem; border-bottom: 1px solid var(--border);
+      display: flex; gap: 1rem; align-items: center; justify-content: space-between; flex-wrap: wrap; }
+    h1 { font-size: 1.15rem; margin: 0; letter-spacing: 0.02em; }
+    .muted { color: var(--muted); font-size: 0.9rem; }
+    main { display: grid; grid-template-columns: 1.2fr 1fr; gap: 1rem; padding: 1rem 1.5rem 2rem; }
+    @media (max-width: 960px) { main { grid-template-columns: 1fr; } }
+    section { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; }
+    section h2 { margin: 0 0 0.75rem; font-size: 0.95rem; }
+    button { background: #0ea5e9; color: #04111a; border: 0; border-radius: 8px; padding: 0.45rem 0.8rem;
+      font-weight: 600; cursor: pointer; }
+    button.secondary { background: var(--chip); color: var(--text); }
+    table { border-collapse: collapse; width: 100%; font-size: 0.82rem; }
+    th, td { border: 1px solid var(--border); padding: 0.45rem 0.55rem; text-align: left; vertical-align: top; }
+    th { background: #0f172a; position: sticky; top: 0; }
+    .allow { background: rgba(20,83,45,0.55); }
+    .deny { background: rgba(127,29,29,0.55); }
+    .feed { max-height: 420px; overflow: auto; display: flex; flex-direction: column; gap: 0.5rem; }
+    .card { background: #0f172a; border: 1px solid var(--border); border-radius: 10px; padding: 0.65rem 0.75rem; cursor: pointer; }
+    .card:hover { border-color: var(--accent); }
+    .chip { display: inline-block; padding: 0.1rem 0.45rem; border-radius: 999px; background: var(--chip); font-size: 0.75rem; margin-right: 0.35rem; }
+    .chip.allow { background: var(--allow); }
+    .chip.deny { background: var(--deny); }
+    #explain { white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.75rem; background: #0f172a; border-radius: 8px; padding: 0.75rem; max-height: 360px; overflow: auto; }
+    .toolbar { display: flex; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.75rem; }
+    code { font-family: ui-monospace, monospace; }
   </style>
 </head>
 <body>
-  <h1>PAAC Policy Board</h1>
-  <p class="muted">Role × resource matrix. LLM interprets intent; only the policy engine grants authority.</p>
-  <p><button id="refresh">Refresh matrix</button></p>
-  <div id="matrix">Loading…</div>
+  <header>
+    <div>
+      <h1>PAAC Policy Board</h1>
+      <div class="muted">Cedar grants authority — LLM output is untrusted. Fail closed.</div>
+    </div>
+    <div class="toolbar">
+      <button id="refresh">Refresh</button>
+      <button class="secondary" id="auto">Auto-refresh: off</button>
+    </div>
+  </header>
+  <main>
+    <section>
+      <h2>Role × resource matrix</h2>
+      <div id="matrix" class="muted">Loading…</div>
+    </section>
+    <section>
+      <h2>Live audit feed</h2>
+      <div id="feed" class="feed muted">Loading…</div>
+    </section>
+    <section style="grid-column: 1 / -1;">
+      <h2>Explain panel</h2>
+      <div class="muted" style="margin-bottom:0.5rem;">Click a decision card to inspect evidence.</div>
+      <div id="explain">No decision selected.</div>
+    </section>
+  </main>
   <script>
-    async function load() {
+    let auto = false, timer = null;
+    async function loadMatrix() {
       const res = await fetch('/v1/board/matrix');
       const data = await res.json();
-      let html = '<table><thead><tr><th>Role</th>';
-      for (const r of data.resources) html += `<th>${r}</th>`;
+      let html = '<div style="overflow:auto"><table><thead><tr><th>Role</th>';
+      for (const r of data.resources || []) html += `<th>${r}</th>`;
       html += '</tr></thead><tbody>';
-      for (const role of data.roles) {
+      for (const role of data.roles || []) {
         html += `<tr><th>${role}</th>`;
-        for (const resource of data.resources) {
-          const cell = data.cells.find(c => c.role === role && c.resource === resource);
+        for (const resource of data.resources || []) {
+          const cell = (data.cells || []).find(c => c.role === role && c.resource === resource);
           const summary = cell ? cell.effect_summary : 'DENY (default)';
-          const cls = summary.includes('Allow') || summary.includes('allow') ? 'allow' :
-                      summary.includes('Deny') || summary.includes('DENY') ? 'deny' : '';
+          const cls = /allow/i.test(summary) ? 'allow' : /deny/i.test(summary) ? 'deny' : '';
           html += `<td class="${cls}"><code>${summary}</code></td>`;
         }
         html += '</tr>';
       }
-      html += '</tbody></table>';
+      html += '</tbody></table></div>';
       document.getElementById('matrix').innerHTML = html;
     }
-    document.getElementById('refresh').onclick = load;
-    load();
+    async function loadFeed() {
+      const res = await fetch('/v1/board/decisions');
+      const data = await res.json();
+      const decisions = data.decisions || [];
+      if (!decisions.length) {
+        document.getElementById('feed').innerHTML = '<div class="muted">No audit events yet.</div>';
+        return;
+      }
+      document.getElementById('feed').innerHTML = decisions.map(d => {
+        const effect = (d.decision || d.decision_full?.effect || '').toString();
+        const cls = /allow/i.test(effect) ? 'allow' : 'deny';
+        const id = d.decision_id || d.decision_full?.evidence?.decision_id || '';
+        return `<div class="card" data-id="${id}">
+          <span class="chip ${cls}">${effect}</span>
+          <span class="chip">${d.action || ''} → ${d.resource || ''}</span>
+          <div class="muted" style="margin-top:0.35rem">${d.principal || ''} · ${d.latency_ms ?? '?'}ms · ${id.slice(0,8)}…</div>
+        </div>`;
+      }).join('');
+      document.querySelectorAll('.card').forEach(el => el.onclick = () => explain(el.dataset.id));
+    }
+    async function explain(id) {
+      if (!id) return;
+      const res = await fetch('/v1/explain/' + id);
+      const data = await res.json();
+      document.getElementById('explain').textContent = JSON.stringify(data, null, 2);
+    }
+    async function refresh() { await Promise.all([loadMatrix(), loadFeed()]); }
+    document.getElementById('refresh').onclick = refresh;
+    document.getElementById('auto').onclick = () => {
+      auto = !auto;
+      document.getElementById('auto').textContent = 'Auto-refresh: ' + (auto ? 'on' : 'off');
+      if (timer) clearInterval(timer);
+      if (auto) timer = setInterval(refresh, 3000);
+    };
+    refresh();
   </script>
 </body>
 </html>

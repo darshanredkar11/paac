@@ -1,0 +1,17 @@
+[Unit]
+Description=PAAC LLM Authorization Gateway
+After=network.target
+
+[Service]
+Type=simple
+User=paac
+WorkingDirectory=/opt/paac
+Environment=PAAC_MODE=production
+Environment=RUST_LOG=info
+ExecStart=/opt/paac/paac-proxy --config /opt/paac/paac.toml --sqlite /var/lib/paac/paac.db
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+
+[Install]
+WantedBy=multi-user.target

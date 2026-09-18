@@ -1,24 +1,111 @@
-//! Natural language → AuthzRequest. Never used for policy evaluation.
+//! Natural language → AuthzRequest **proposal**.
+//!
+//! The bridge never grants authority. Callers must re-evaluate the returned
+//! [`AuthzRequest`] with `authz_core::evaluate`.
+
+mod extract;
+mod error;
+
+pub use error::BridgeError;
+pub use extract::{extract_structured, NlExtraction, StructuredExtractor};
 
 use async_trait::async_trait;
+use authz_catalog::ResourceCatalog;
 use authz_core::{
-    Action, AuthzRequest, ContextMap, Principal, Relationship, RelationshipKind, Resource, Subject,
+    AuthzRequest, AuthzRequestBuilder, Principal, Relationship, RelationshipKind,
 };
 use indexmap::IndexMap;
-use thiserror::Error;
-
-#[derive(Debug, Error)]
-pub enum BridgeError {
-    #[error("bridge error: {0}")]
-    Msg(String),
-}
 
 #[async_trait]
 pub trait LlmRequestBuilder: Send + Sync {
     async fn build_request(&self, utterance: &str) -> Result<AuthzRequest, BridgeError>;
 }
 
-/// Deterministic mock that recognizes the CEO expense demo phrase.
+/// Deterministic structured extractor + optional catalog binding.
+pub struct CatalogAwareBridge {
+    pub default_principal: Principal,
+    pub catalog: Option<ResourceCatalog>,
+}
+
+impl Default for CatalogAwareBridge {
+    fn default() -> Self {
+        Self {
+            default_principal: Principal::with_roles("user:hr-head", vec!["HR_HEAD".into()]),
+            catalog: None,
+        }
+    }
+}
+
+#[async_trait]
+impl LlmRequestBuilder for CatalogAwareBridge {
+    async fn build_request(&self, utterance: &str) -> Result<AuthzRequest, BridgeError> {
+        let extraction = extract_structured(utterance)?;
+        bind_extraction(self.default_principal.clone(), &extraction, self.catalog.as_ref())
+    }
+}
+
+pub fn bind_extraction(
+    principal: Principal,
+    extraction: &NlExtraction,
+    catalog: Option<&ResourceCatalog>,
+) -> Result<AuthzRequest, BridgeError> {
+    let mut attrs = IndexMap::new();
+    let mut resource_kind = extraction.resource_kind.clone();
+    let mut resource_id = extraction.resource_id.clone();
+
+    if let Some(cat) = catalog {
+        if let Some(id) = &extraction.resource_id {
+            if let Some(res) = cat.find_resource(id) {
+                resource_kind = res.kind.clone();
+                if let Some(d) = &res.department {
+                    attrs.insert("department".into(), d.clone());
+                }
+                if let Some(s) = &res.sensitivity {
+                    attrs.insert("sensitivity".into(), s.clone());
+                }
+            }
+        } else if let Some(res) = cat.resources.iter().find(|r| {
+            r.kind.eq_ignore_ascii_case(&extraction.resource_kind)
+                || r.name.to_ascii_lowercase().contains(&extraction.resource_kind.to_ascii_lowercase())
+        }) {
+            resource_id = Some(res.id.clone());
+            resource_kind = res.kind.clone();
+            if let Some(d) = &res.department {
+                attrs.insert("department".into(), d.clone());
+            }
+            if let Some(s) = &res.sensitivity {
+                attrs.insert("sensitivity".into(), s.clone());
+            }
+        }
+    }
+
+    let mut b = AuthzRequestBuilder::new()
+        .principal_obj(principal.clone())?
+        .action(&extraction.action)?
+        .resource(resource_kind, resource_id, attrs)?;
+
+    if let Some(subj) = &extraction.subject_id {
+        b = b.subject(subj, extraction.subject_groups.clone())?;
+    }
+    b = b.context_kv("nl_utterance", &extraction.utterance);
+    b = b.context_kv("extraction_confidence", extraction.confidence.to_string());
+    b = b.context_kv("proposal_only", "true");
+
+    for dr in &extraction.direct_reports {
+        b = b.relationship(Relationship {
+            kind: RelationshipKind::DirectReports,
+            from: principal.id.clone(),
+            to: dr.clone(),
+        });
+    }
+
+    let mut req = b.build()?;
+    req.acting_as = Some("agent:nl-bridge".into());
+    req.on_behalf_of = Some(principal.id);
+    Ok(req)
+}
+
+/// Backward-compatible mock that recognizes CEO expense phrases.
 pub struct MockLlmProvider {
     pub default_principal: Principal,
 }
@@ -34,35 +121,12 @@ impl Default for MockLlmProvider {
 #[async_trait]
 impl LlmRequestBuilder for MockLlmProvider {
     async fn build_request(&self, utterance: &str) -> Result<AuthzRequest, BridgeError> {
-        let lower = utterance.to_ascii_lowercase();
-        if lower.contains("ceo")
-            && (lower.contains("spend") || lower.contains("expense") || lower.contains("trip"))
-        {
-            return Ok(AuthzRequest {
-                principal: self.default_principal.clone(),
-                action: Action::new("READ"),
-                resource: Resource::kind("TRAVEL_EXPENSE"),
-                subject: Some(Subject {
-                    id: "employee:CEO".into(),
-                    kind: "Employee".into(),
-                    groups: vec!["EXECUTIVE".into()],
-                    attrs: IndexMap::new(),
-                }),
-                context: ContextMap {
-                    values: IndexMap::from([("time_range".into(), "LAST_WEEK".into())]),
-                },
-                relationships: vec![Relationship {
-                    kind: RelationshipKind::DirectReports,
-                    from: self.default_principal.id.clone(),
-                    to: "employee:alice".into(),
-                }],
-                acting_as: Some("agent:enterprise-assistant".into()),
-                on_behalf_of: Some(self.default_principal.id.clone()),
-            });
+        CatalogAwareBridge {
+            default_principal: self.default_principal.clone(),
+            catalog: None,
         }
-        Err(BridgeError::Msg(format!(
-            "mock provider could not interpret: {utterance}"
-        )))
+        .build_request(utterance)
+        .await
     }
 }
 
@@ -70,29 +134,18 @@ impl LlmRequestBuilder for MockLlmProvider {
 mod tests {
     use super::*;
 
-    #[tokio::test]
-    async fn mock_builds_ceo_request() {
-        // tokio not in deps — use block_on via futures? Keep sync test instead.
+    #[test]
+    fn ceo_expense_extraction() {
+        let ext = extract_structured("How much did the CEO spend on trips last week?").unwrap();
+        assert_eq!(ext.action, "READ");
+        assert_eq!(ext.resource_kind, "TRAVEL_EXPENSE");
+        assert_eq!(ext.subject_id.as_deref(), Some("employee:CEO"));
+        assert!(ext.subject_groups.iter().any(|g| g == "EXECUTIVE"));
     }
 
     #[test]
-    fn mock_sync_pattern() {
-        let rt = tokio_test_block();
-        let p = MockLlmProvider::default();
-        let req = rt
-            .block_on(p.build_request(
-                "How much did the CEO spend on trips last week?",
-            ))
-            .unwrap();
-        assert_eq!(req.action.name, "READ");
-        assert_eq!(req.resource.kind, "TRAVEL_EXPENSE");
-        assert_eq!(req.subject.unwrap().id, "employee:CEO");
-    }
-
-    fn tokio_test_block() -> tokio::runtime::Runtime {
-        tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .unwrap()
+    fn sql_toolish_query() {
+        let ext = extract_structured("run sql_query on db.finance.ledger").unwrap();
+        assert!(ext.action == "TOOL_INVOKE" || ext.resource_kind.contains("DB") || ext.resource_id.is_some());
     }
 }

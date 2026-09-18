@@ -1,0 +1,31 @@
+# Company demo stack: paac-proxy + mock LLM + optional OpenLDAP
+services:
+  mock-llm:
+    image: wiremock/wiremock:3.3.1
+    ports: ["9000:8080"]
+    volumes:
+      - ./deploy/wiremock:/home/wiremock
+
+  paac-proxy:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    ports: ["8080:8080"]
+    environment:
+      PAAC_MODE: production
+      PAAC_UPSTREAM_URL: http://mock-llm:8080
+      PAAC_JWT_SECRET: demo-prod-secret-change-me
+      PAAC_REQUIRE_SIGNED_BUNDLE: "true"
+    volumes:
+      - ./data:/app/data
+      - ./paac.toml.example:/app/paac.toml:ro
+    depends_on: [mock-llm]
+
+  openldap:
+    image: osixia/openldap:1.5.0
+    profiles: ["ldap"]
+    ports: ["389:389"]
+    environment:
+      LDAP_ORGANISATION: "PAAC"
+      LDAP_DOMAIN: "example.com"
+      LDAP_ADMIN_PASSWORD: "admin"
