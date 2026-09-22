@@ -30,6 +30,8 @@ pub struct ToolMapping {
     pub resource_id_arg: Option<String>,
     #[serde(default)]
     pub default_attrs: IndexMap<String, String>,
+    #[serde(default)]
+    pub arg_mappings: IndexMap<String, String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
@@ -79,16 +81,18 @@ impl ResourceCatalog {
                     }
                 }
             }
-            // Also copy string args into context for policy.
+            // Parse top-level & nested JSON args into Cedar context values
             let mut ctx = IndexMap::new();
             ctx.insert("tool_name".into(), tool_name.to_string());
-            if let Some(obj) = args.as_object() {
-                for (k, v) in obj {
-                    if let Some(s) = v.as_str() {
-                        ctx.insert(format!("arg_{k}"), s.to_string());
-                    }
+            flatten_json_args(args, "arg_", &mut ctx);
+
+            // Apply explicit custom arg mappings if specified
+            for (target_key, json_path) in &m.arg_mappings {
+                if let Some(val) = extract_nested_arg(args, json_path) {
+                    ctx.insert(target_key.clone(), val);
                 }
             }
+
             return AuthzRequest {
                 principal,
                 action: Action::new(&m.action),
@@ -107,6 +111,7 @@ impl ResourceCatalog {
         // Unknown tool → deny-by-default resource TOOL_UNKNOWN
         let mut ctx = IndexMap::new();
         ctx.insert("tool_name".into(), tool_name.to_string());
+        flatten_json_args(args, "arg_", &mut ctx);
         AuthzRequest {
             principal,
             action: Action::new("TOOL_INVOKE"),
@@ -203,12 +208,59 @@ pub fn validate_catalog(catalog: &ResourceCatalog) -> Result<(), CatalogError> {
     Ok(())
 }
 
+fn flatten_json_args(val: &serde_json::Value, prefix: &str, out: &mut IndexMap<String, String>) {
+    match val {
+        serde_json::Value::Object(map) => {
+            for (k, v) in map {
+                let key = format!("{prefix}{k}");
+                match v {
+                    serde_json::Value::String(s) => {
+                        out.insert(key, s.clone());
+                    }
+                    serde_json::Value::Number(n) => {
+                        out.insert(key, n.to_string());
+                    }
+                    serde_json::Value::Bool(b) => {
+                        out.insert(key, b.to_string());
+                    }
+                    serde_json::Value::Object(_) => {
+                        flatten_json_args(v, &format!("{key}_"), out);
+                    }
+                    serde_json::Value::Array(arr) => {
+                        let strs: Vec<String> = arr.iter().map(|item| item.to_string()).collect();
+                        out.insert(key, strs.join(","));
+                    }
+                    serde_json::Value::Null => {}
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn extract_nested_arg(val: &serde_json::Value, path: &str) -> Option<String> {
+    let clean_path = path.trim_start_matches("args.").trim_start_matches("$.");
+    let parts: Vec<&str> = clean_path.split('.').collect();
+    let mut current = val;
+    for p in parts {
+        current = current.get(p)?;
+    }
+    match current {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        other => Some(other.to_string()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn tool_maps_to_resource() {
+        let mut arg_mappings = IndexMap::new();
+        arg_mappings.insert("extracted_amount".into(), "args.query.amount".into());
         let cat = ResourceCatalog {
             version: "1".into(),
             resources: vec![CatalogResource {
@@ -225,20 +277,24 @@ mod tests {
                 resource_kind: "DB_TABLE".into(),
                 resource_id_arg: Some("table".into()),
                 default_attrs: IndexMap::new(),
+                arg_mappings,
             }],
         };
         validate_catalog(&cat).unwrap();
         let req = cat.authz_for_tool(
             Principal::with_roles("user:hr-head", vec!["HR_HEAD".into()]),
             "sql_query",
-            &serde_json::json!({"table": "db.hr.employees", "sql": "select 1"}),
+            &serde_json::json!({
+                "table": "db.hr.employees",
+                "sql": "select 1",
+                "query": { "amount": 50000 }
+            }),
         );
         assert_eq!(req.action.name, "TOOL_INVOKE");
         assert_eq!(req.resource.kind, "DB_TABLE");
         assert_eq!(req.resource.id.as_deref(), Some("db.hr.employees"));
-        assert_eq!(
-            req.resource.attrs.get("sensitivity").map(|s| s.as_str()),
-            Some("PII")
-        );
+        assert_eq!(req.context.values.get("arg_table").map(|s| s.as_str()), Some("db.hr.employees"));
+        assert_eq!(req.context.values.get("arg_query_amount").map(|s| s.as_str()), Some("50000"));
+        assert_eq!(req.context.values.get("extracted_amount").map(|s| s.as_str()), Some("50000"));
     }
 }

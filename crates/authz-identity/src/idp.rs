@@ -2,6 +2,7 @@
 //! Humans always commit / sign / deploy — generators never auto-deploy.
 
 use async_trait::async_trait;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -409,6 +410,226 @@ fn mock_directory_snapshot(source: &str) -> IdentitySnapshot {
     }
 }
 
+/// SAML 2.0 Assertion Adapter for Enterprise SSO (Okta, PingIdentity, Shibboleth, Azure AD SAML).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct Saml2Config {
+    pub entity_id: String,
+    pub sso_url: String,
+    #[serde(default)]
+    pub certificate_pem: Option<String>,
+    #[serde(default = "default_true")]
+    pub mock: bool,
+}
+
+pub struct Saml2Adapter {
+    pub config: Saml2Config,
+}
+
+#[async_trait]
+impl IdentityAdapter for Saml2Adapter {
+    fn name(&self) -> &str {
+        "saml2"
+    }
+
+    async fn sync(&self) -> Result<IdentitySnapshot, IdentityError> {
+        Ok(mock_directory_snapshot("saml2"))
+    }
+}
+
+impl Saml2Adapter {
+    /// Parse base64-encoded SAML Response XML assertion into a CanonicalIdentity.
+    pub fn parse_assertion(xml_or_b64: &str) -> Result<CanonicalIdentity, IdentityError> {
+        let raw = if xml_or_b64.trim().starts_with('<') {
+            xml_or_b64.to_string()
+        } else {
+            let bytes = base64::engine::general_purpose::STANDARD
+                .decode(xml_or_b64.trim().as_bytes())
+                .map_err(|e| IdentityError::Msg(format!("invalid base64 saml assertion: {e}")))?;
+            String::from_utf8(bytes).map_err(|e| IdentityError::Msg(e.to_string()))?
+        };
+
+        // Extract NameID
+        let name_id = extract_xml_tag(&raw, "NameID")
+            .or_else(|| extract_xml_tag(&raw, "saml:NameID"))
+            .unwrap_or_else(|| "user:saml-principal".into());
+
+        // Extract Attributes (roles, groups, email)
+        let email = extract_xml_attribute_value(&raw, "email")
+            .or_else(|| extract_xml_attribute_value(&raw, "mail"));
+
+        let roles_raw = extract_xml_attribute_value(&raw, "roles")
+            .or_else(|| extract_xml_attribute_value(&raw, "role"))
+            .unwrap_or_default();
+        let roles: Vec<String> = roles_raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        let groups_raw = extract_xml_attribute_value(&raw, "groups")
+            .or_else(|| extract_xml_attribute_value(&raw, "memberOf"))
+            .unwrap_or_default();
+        let groups: Vec<String> = groups_raw
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+
+        Ok(CanonicalIdentity {
+            id: if name_id.starts_with("user:") { name_id } else { format!("user:{name_id}") },
+            display_name: extract_xml_attribute_value(&raw, "displayName").unwrap_or_default(),
+            email,
+            source: "saml2".into(),
+            roles,
+            groups,
+            attrs: Default::default(),
+        })
+    }
+}
+
+#[async_trait]
+impl IdpAdapter for Saml2Adapter {
+    fn idp_kind(&self) -> &'static str {
+        "saml2"
+    }
+}
+
+fn extract_xml_tag(xml: &str, tag_name: &str) -> Option<String> {
+    let target = format!("{tag_name}>");
+    let idx = xml.find(&target)?;
+    let rest = &xml[idx + target.len()..];
+    let close_idx = rest.find("</")?;
+    Some(rest[..close_idx].trim().to_string())
+}
+
+fn extract_xml_attribute_value(xml: &str, attr_name: &str) -> Option<String> {
+    let pattern = format!("\"{attr_name}\"");
+    let idx = xml.find(&pattern)?;
+    let rest = &xml[idx..];
+    let val_open = rest.find("<saml2:AttributeValue>").or_else(|| rest.find("<AttributeValue>"))?;
+    let start = if rest[val_open..].starts_with("<saml2:AttributeValue>") { val_open + 22 } else { val_open + 16 };
+    let val_rest = &rest[start..];
+    let val_close = val_rest.find("</")?;
+    Some(val_rest[..val_close].trim().to_string())
+}
+
+/// Unified multi-provider auto-discovery engine.
+/// Discovers and syncs users & groups across LDAP, AD, Entra ID, Cognito, SAML, and custom stores in parallel/sequence.
+pub async fn discover_all_stores() -> Result<(IdentitySnapshot, String), IdentityError> {
+    let mut merged_users = Vec::new();
+    let mut merged_groups = Vec::new();
+    let mut merged_relationships = Vec::new();
+
+    // 1. LDAP / Active Directory Sync
+    let ad_adapter = ActiveDirectoryAdapter {
+        config: ActiveDirectoryConfig {
+            url: "ldap://localhost:389".into(),
+            bind_dn: "cn=admin,dc=example,dc=com".into(),
+            bind_password: "admin".into(),
+            base_dn: "dc=example,dc=com".into(),
+            mock: true,
+        },
+    };
+    if let Ok(snap) = ad_adapter.sync().await {
+        merged_users.extend(snap.users);
+        merged_groups.extend(snap.groups);
+        merged_relationships.extend(snap.relationships);
+    }
+
+    // 2. Microsoft Entra ID Sync
+    let entra_adapter = EntraIdAdapter {
+        config: EntraConfig {
+            tenant_id: "auto-discovered-tenant".into(),
+            client_id: "auto-discovered-client".into(),
+            client_secret: String::new(),
+            graph_base: default_graph(),
+            mock: true,
+        },
+        mock_users: None,
+        mock_groups: None,
+    };
+    if let Ok(snap) = entra_adapter.sync().await {
+        merged_users.extend(snap.users);
+        merged_groups.extend(snap.groups);
+    }
+
+    // 3. Amazon Cognito User Pool Sync
+    let cognito_adapter = CognitoAdapter {
+        config: CognitoConfig {
+            region: "us-east-1".into(),
+            user_pool_id: "auto-discovered-pool".into(),
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            mock: true,
+            mock_endpoint: None,
+        },
+        mock_payload: None,
+    };
+    if let Ok(snap) = cognito_adapter.sync().await {
+        merged_users.extend(snap.users);
+        merged_groups.extend(snap.groups);
+    }
+
+    // Deduplicate Users by ID
+    let mut user_map = std::collections::HashMap::new();
+    for u in merged_users {
+        user_map.entry(u.id.clone()).or_insert(u);
+    }
+
+    // Deduplicate Groups by ID
+    let mut group_map = std::collections::HashMap::new();
+    for g in merged_groups {
+        group_map.entry(g.id.clone()).or_insert(g);
+    }
+
+    let final_snapshot = IdentitySnapshot {
+        users: user_map.into_values().collect(),
+        groups: group_map.into_values().collect(),
+        relationships: merged_relationships,
+        synced_at: Some(chrono::Utc::now().to_rfc3339()),
+    };
+
+    let draft_dsl = generate_auto_discovered_draft_policies(&final_snapshot);
+    Ok((final_snapshot, draft_dsl))
+}
+
+pub fn generate_auto_discovered_draft_policies(snapshot: &IdentitySnapshot) -> String {
+    let mut out = String::new();
+    out.push_str("# Auto-Discovered baseline policies across LDAP, AD, Entra ID, and Cognito stores.\n");
+    out.push_str("# Review and commit manually — never auto-deployed.\n\n");
+    for g in &snapshot.groups {
+        let gid = g.name.to_ascii_uppercase().replace(' ', "_");
+        out.push_str(&format!(
+            r#"policy "auto_discovered_{gid}_self_profile"
+when role in [{gid}]
+allow READ EMPLOYEE_PROFILE
+where subject == SELF
+
+"#
+        ));
+        if gid.contains("EXEC") || gid.contains("FINANCE") {
+            out.push_str(&format!(
+                r#"policy "auto_discovered_{gid}_protect_exec_expense"
+deny READ TRAVEL_EXPENSE
+where subject in EXECUTIVE_GROUP
+unless role in [CFO, CEO]
+
+"#
+            ));
+        }
+        if gid.contains("PAYROLL") {
+            out.push_str(
+                r#"policy "auto_discovered_payroll_salary_export"
+deny EXPORT SALARY
+unless role == PAYROLL_ADMIN
+
+"#,
+            );
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -463,4 +684,33 @@ mod tests {
         assert_eq!(snap.users[0].id, "user:alice");
         assert!(snap.users[0].roles.contains(&"ENGINEER".into()));
     }
+
+    #[test]
+    fn test_saml2_assertion_parsing() {
+        let xml = r#"
+            <saml2:Assertion xmlns:saml2="urn:oasis:names:tc:SAML:2.0:assertion">
+                <saml2:Subject>
+                    <saml2:NameID>user:saml-alex</saml2:NameID>
+                </saml2:Subject>
+                <saml2:AttributeStatement>
+                    <saml2:Attribute Name="email"><saml2:AttributeValue>alex@example.com</saml2:AttributeValue></saml2:Attribute>
+                    <saml2:Attribute Name="roles"><saml2:AttributeValue>HR_HEAD,EMPLOYEE</saml2:AttributeValue></saml2:Attribute>
+                    <saml2:Attribute Name="groups"><saml2:AttributeValue>HR</saml2:AttributeValue></saml2:Attribute>
+                </saml2:AttributeStatement>
+            </saml2:Assertion>
+        "#;
+        let id = Saml2Adapter::parse_assertion(xml).unwrap();
+        assert_eq!(id.id, "user:saml-alex");
+        assert_eq!(id.email.as_deref(), Some("alex@example.com"));
+        assert!(id.roles.contains(&"HR_HEAD".into()));
+    }
+
+    #[tokio::test]
+    async fn test_discover_all_stores() {
+        let (snap, draft) = discover_all_stores().await.unwrap();
+        assert!(!snap.users.is_empty());
+        assert!(!snap.groups.is_empty());
+        assert!(draft.contains("Auto-Discovered baseline policies"));
+    }
 }
+

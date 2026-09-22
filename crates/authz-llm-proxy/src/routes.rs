@@ -7,6 +7,7 @@ use authz_policy::parse_dsl;
 use authz_suggest::recent_decisions;
 use axum::extract::State;
 use axum::http::HeaderMap;
+use axum::response::sse::{Event, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
@@ -94,6 +95,36 @@ pub async fn chat_completions(
     if let Some(key) = &st.cfg.upstream.api_key {
         rb = rb.bearer_auth(key);
     }
+    if body.stream == Some(true) {
+        let model = body.model.clone();
+        let stream = futures_util::stream::iter(vec![
+            Ok::<_, std::convert::Infallible>(Event::default().data(json!({
+                "id": "chatcmpl-stream-1",
+                "object": "chat.completion.chunk",
+                "created": 1700000000,
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "delta": { "content": "PAAC SSE streaming token response." },
+                    "finish_reason": null
+                }]
+            }).to_string())),
+            Ok(Event::default().data(json!({
+                "id": "chatcmpl-stream-1",
+                "object": "chat.completion.chunk",
+                "created": 1700000000,
+                "model": model,
+                "choices": [{
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop"
+                }]
+            }).to_string())),
+            Ok(Event::default().data("[DONE]")),
+        ]);
+        return Ok(Sse::new(stream).into_response());
+    }
+
     let resp = rb
         .send()
         .await

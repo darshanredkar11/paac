@@ -5,9 +5,11 @@
 
 mod extract;
 mod error;
+mod hybrid;
 
 pub use error::BridgeError;
 pub use extract::{extract_structured, NlExtraction, StructuredExtractor};
+pub use hybrid::{ClassifierProvider, HybridExtractor, MockClassifierProvider};
 
 use async_trait::async_trait;
 use authz_catalog::ResourceCatalog;

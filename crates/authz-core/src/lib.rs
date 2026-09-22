@@ -6,6 +6,7 @@
 //! # Extension points
 //! - Build requests with [`AuthzRequestBuilder`] and validated [`ids`] newtypes.
 //! - Call [`evaluate`] with an [`EvaluatorConfig`] holding an in-memory Cedar `PolicySet`.
+//! - Use embeddable SDK [`PaacEngine`] for in-process application evaluation.
 //! - Never pass LLM output as an authority signal — only as a proposed request to revalidate.
 
 mod builder;
@@ -16,6 +17,7 @@ mod evaluate;
 mod hot_cache;
 mod ids;
 mod request;
+mod sdk;
 
 pub use builder::AuthzRequestBuilder;
 pub use decision::{AuthzDecision, DecisionEffect, Evidence, MatchedPolicy};
@@ -28,6 +30,7 @@ pub use request::{
     Action, AuthzRequest, ContextMap, Principal, Relationship, RelationshipKind, Resource,
     Subject,
 };
+pub use sdk::PaacEngine;
 
 #[cfg(test)]
 mod edge_tests;

@@ -63,7 +63,8 @@ impl PolicyStore {
     pub fn validate_dsl(&self, dsl: &str) -> Result<Vec<DslPolicy>, PolicyError> {
         let policies = parse_dsl(dsl)?;
         let _cedar = dsl_to_cedar(&policies)?;
-        let _set = cedar_policy_set_from_dsl(&policies)?;
+        let set = cedar_policy_set_from_dsl(&policies)?;
+        crate::schema::validate_cedar_policy_set(&set)?;
         if policies.is_empty() {
             return Err(PolicyError::Validate("no policies found".into()));
         }

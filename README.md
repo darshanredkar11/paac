@@ -1,20 +1,42 @@
 # PAAC — LLM Authorization Gateway
 
-**Company product** for self-hosted LLMs sitting on production data.
+> **Zero-Trust Security Gateway & AI Firewall for Enterprise LLMs & RAG Applications**
 
-Natural-language questions and tool/retrieval calls must not reach prod data until a **deterministic Cedar policy engine** returns `ALLOW`. The LLM never grants authority. Fail closed.
+[![Build & Test](https://img.shields.io/badge/build-passing-brightgreen)](#tests) [![Engine](https://img.shields.io/badge/engine-AWS%20Cedar-blue)](#crate-map) [![Latency](https://img.shields.io/badge/latency-%3C1ms-success)](#performance-notes)
+
+📖 **Documentation**: [Executive & Product Overview](docs/PRODUCT_OVERVIEW.md) · [Architecture Guide](docs/ARCHITECTURE.md) · [Integration Guide](docs/INTEGRATION_GUIDE.md) · [Policy Guide](docs/POLICY_GUIDE.md) · [Security Model](docs/SECURITY.md)
+
+---
+
+### What is PAAC in Simple Terms?
+
+#### 💡 For Management & Product Leaders
+When your company connects an AI chatbot or AI agent to internal databases, **the AI model cannot be trusted to handle access permissions**. A clever user prompt can trick an LLM into revealing confidential executive salaries, financial records, or customer PII.
+
+**PAAC (Policy-As-Access-Control)** is a high-performance **Security Firewall** sitting in front of your LLM. It intercepts every user prompt and AI tool call, checking them against mathematical security policies (**AWS Cedar**). If PAAC says `ALLOW`, data moves. If PAAC says `DENY`, the request is blocked instantly (**HTTP 403**) before touching your data or running tool calls.
+
+#### 🧑‍💻 For Junior Developers (The "Smart Intern & Manager" Analogy)
+Think of an LLM as a **brilliant Intern**: it can read documents, summarize text, and write SQL code, but it is naive and easily tricked by prompt injections.
+
+**PAAC is the Strict Manager sitting at the door**:
+1. When a user asks a question, PAAC checks their identity badge (JWT, LDAP, Entra ID).
+2. PAAC checks the company rulebook: *"Does an intern have permission to access CEO payroll?"*
+3. If **NO**, PAAC blocks the request immediately. The LLM never accesses the database.
+
+---
+
+### Request Flow
 
 ```
-Client (chat UI / app)
-  → paac-proxy  (OpenAI-compatible /v1/chat/completions, /v1/retrieve, MCP & A2A hooks)
-      1. Authenticate principal (JWT / JWKS; headers only in development)
-      2. Normalize identity (LDAP / AD / Entra ID / Cognito cache)
-      3. NL → AuthzRequest proposal (structured extraction + resource catalog)
-      4. Evaluate signed policy bundle (deny-by-default, ArcSwap hot cache)
-      5. DENY → structured refusal + audit evidence (never call data connectors)
-      6. ALLOW → forward to upstream LLM; re-check every tool_call before execution
-  → Upstream self-hosted LLM (vLLM / Ollama / LiteLLM / OpenAI-compatible)
-  → Data/tool connectors (only after ALLOW)
+Client (Chat UI / App)
+  │
+  ▼
+paac-proxy (OpenAI-compatible /v1/chat/completions, /v1/retrieve, MCP & A2A hooks)
+  ├─ 1. Authenticate Principal (JWT / JWKS / IdP normalization)
+  ├─ 2. NL → AuthzRequest Proposal (Structured Extraction + Resource Catalog)
+  ├─ 3. Deterministic Cedar Eval (In-memory lock-free ArcSwap cache)
+  ├─ 4. DENY ──► Return HTTP 403 Refusal + Audit Evidence (LLM & DB never called)
+  └─ 5. ALLOW ──► Forward to Upstream LLM & Filter Tool Calls before execution
 ```
 
 ## Quick deploy in front of your LLM

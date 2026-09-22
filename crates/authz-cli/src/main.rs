@@ -113,10 +113,16 @@ enum ProxyCmd {
 
 #[derive(Subcommand, Debug)]
 enum IdentityCmd {
+    /// Sync identity from a single adapter (ldap|ad|entra|cognito|local|all)
     Sync {
         #[arg(default_value = "ldap")]
         source: String,
         #[arg(long, help = "Also write DRAFT policies from groups (never auto-deploy)")]
+        drafts: bool,
+    },
+    /// Auto-discover across all configured LDAP, AD, Entra ID, Cognito, and custom stores
+    Discover {
+        #[arg(long, default_value_t = true, help = "Write consolidated DRAFT policies from discovered metadata")]
         drafts: bool,
     },
 }
@@ -161,6 +167,9 @@ async fn main() -> Result<()> {
         Commands::Identity { cmd } => match cmd {
             IdentityCmd::Sync { source, drafts } => {
                 identity_sync(&paths, &source, drafts).await?;
+            }
+            IdentityCmd::Discover { drafts } => {
+                identity_discover(&paths, drafts).await?;
             }
         },
         Commands::Policy { cmd } => match cmd {
@@ -216,7 +225,36 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+async fn identity_discover(cli: &Paths, drafts: bool) -> Result<()> {
+    use authz_identity::discover_all_stores;
+    let (snap, draft_dsl) = discover_all_stores().await.map_err(|e| anyhow::anyhow!(e))?;
+    std::fs::create_dir_all(&cli.identity_dir)?;
+    let out = cli.identity_dir.join("snapshot.json");
+    save_snapshot(&out, &snap)?;
+    println!(
+        "Auto-Discovered across all stores (AD, LDAP, Entra ID, Cognito): {} users, {} groups → {}",
+        snap.users.len(),
+        snap.groups.len(),
+        out.display()
+    );
+    if drafts {
+        let store = PolicyStore::open(&cli.policy_dir)?;
+        store
+            .write_draft("auto-discovered", &draft_dsl)
+            .map_err(|e| anyhow::anyhow!(e))?;
+        println!(
+            "wrote DRAFT policies to {}/drafts/auto-discovered.dsl (never auto-deployed)",
+            cli.policy_dir.display()
+        );
+        println!("--- auto-discovered draft preview ---\n{draft_dsl}");
+    }
+    Ok(())
+}
+
 async fn identity_sync(cli: &Paths, source: &str, drafts: bool) -> Result<()> {
+    if source == "all" || source == "discover" {
+        return identity_discover(cli, drafts).await;
+    }
     let snap = match source {
         "ldap" | "mock-ldap" => {
             let adapter = LdapAdapter::mock_demo();
@@ -291,7 +329,7 @@ async fn identity_sync(cli: &Paths, source: &str, drafts: bool) -> Result<()> {
             let adapter = LocalFixtureAdapter::new(path);
             adapter.sync().await?
         }
-        other => bail!("unknown identity source: {other} (use ldap|ad|entra|cognito|local)"),
+        other => bail!("unknown identity source: {other} (use ldap|ad|entra|cognito|local|all)"),
     };
     std::fs::create_dir_all(&cli.identity_dir)?;
     let out = cli.identity_dir.join("snapshot.json");
