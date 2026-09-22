@@ -20,12 +20,14 @@ pub struct StructuredExtractor;
 pub fn extract_structured(utterance: &str) -> Result<NlExtraction, BridgeError> {
     let lower = utterance.to_ascii_lowercase();
 
-    // CEO / executive expense
+    // CEO / executive expense or compensation
     if (lower.contains("ceo") || lower.contains("executive"))
         && (lower.contains("spend")
             || lower.contains("expense")
             || lower.contains("trip")
-            || lower.contains("travel"))
+            || lower.contains("travel")
+            || lower.contains("compensation")
+            || lower.contains("salary"))
     {
         return Ok(NlExtraction {
             utterance: utterance.to_string(),

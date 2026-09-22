@@ -7,6 +7,10 @@ when role in [HR_HEAD, ENGINEER, FINANCE_ANALYST, CFO, CEO, PAYROLL_ADMIN, EMPLO
 allow READ EMPLOYEE_PROFILE
 where subject == SELF
 
+policy "general_chat_allow"
+when role in [HR_HEAD, ENGINEER, FINANCE_ANALYST, CFO, CEO, PAYROLL_ADMIN, EMPLOYEE]
+allow READ GENERAL_CHAT
+
 # --- Travel / executive expense (CEO demo) ---
 policy "hr_team_expense_read"
 when role == HR_HEAD

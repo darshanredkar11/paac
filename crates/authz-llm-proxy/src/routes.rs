@@ -7,7 +7,6 @@ use authz_policy::parse_dsl;
 use authz_suggest::recent_decisions;
 use axum::extract::State;
 use axum::http::HeaderMap;
-use axum::response::sse::{Event, Sse};
 use axum::response::{Html, IntoResponse, Response};
 use axum::Json;
 use serde_json::{json, Value};
@@ -59,29 +58,37 @@ pub async fn chat_completions(
     let principal = resolve_principal(&headers, &st.cfg, &st.jwt, &st.identity_cache).await?;
     let utterance = last_user_text(&body.messages).unwrap_or_default();
 
-    // NL → proposal → Cedar revalidation (LLM never decides)
+    // NL → proposal → Cedar revalidation (LLM never decides; fail-closed)
     if !utterance.is_empty() {
-        if let Ok(extraction) = extract_structured(&utterance) {
-            let req = bind_extraction(principal.clone(), &extraction, Some(&st.engine.catalog))
-                .map_err(|e| ProxyError::BadRequest(e.to_string()))?;
-            {
-                let mut m = st.metrics.write();
-                m.checks_total += 1;
-            }
-            let decision = st.engine.check(&req)?;
-            if decision.effect != DecisionEffect::Allow {
-                st.metrics.write().denies_total += 1;
-                return Err(ProxyError::Forbidden {
-                    message: format!(
-                        "PAAC denied access: {} on {} (decision {})",
-                        req.action.name, req.resource.kind, decision.evidence.decision_id
-                    ),
-                    decision_id: decision.evidence.decision_id.clone(),
-                    body: serde_json::to_value(&decision).unwrap_or_default(),
-                });
-            }
-            st.metrics.write().allows_total += 1;
+        let extraction = extract_structured(&utterance).unwrap_or_else(|_| authz_llm_bridge::NlExtraction {
+            action: "READ".into(),
+            resource_kind: "GENERAL_CHAT".into(),
+            resource_id: None,
+            subject_id: None,
+            subject_groups: vec![],
+            direct_reports: vec![],
+            confidence: 0.0,
+            utterance: utterance.clone(),
+        });
+        let req = bind_extraction(principal.clone(), &extraction, Some(&st.engine.catalog))
+            .map_err(|e| ProxyError::BadRequest(e.to_string()))?;
+        {
+            let mut m = st.metrics.write();
+            m.checks_total += 1;
         }
+        let decision = st.engine.check(&req)?;
+        if decision.effect != DecisionEffect::Allow {
+            st.metrics.write().denies_total += 1;
+            return Err(ProxyError::Forbidden {
+                message: format!(
+                    "PAAC denied access: {} on {} (decision {})",
+                    req.action.name, req.resource.kind, decision.evidence.decision_id
+                ),
+                decision_id: decision.evidence.decision_id.clone(),
+                body: serde_json::to_value(&decision).unwrap_or_default(),
+            });
+        }
+        st.metrics.write().allows_total += 1;
     }
 
     // Forward to upstream LLM
@@ -96,33 +103,19 @@ pub async fn chat_completions(
         rb = rb.bearer_auth(key);
     }
     if body.stream == Some(true) {
-        let model = body.model.clone();
-        let stream = futures_util::stream::iter(vec![
-            Ok::<_, std::convert::Infallible>(Event::default().data(json!({
-                "id": "chatcmpl-stream-1",
-                "object": "chat.completion.chunk",
-                "created": 1700000000,
-                "model": model,
-                "choices": [{
-                    "index": 0,
-                    "delta": { "content": "PAAC SSE streaming token response." },
-                    "finish_reason": null
-                }]
-            }).to_string())),
-            Ok(Event::default().data(json!({
-                "id": "chatcmpl-stream-1",
-                "object": "chat.completion.chunk",
-                "created": 1700000000,
-                "model": model,
-                "choices": [{
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop"
-                }]
-            }).to_string())),
-            Ok(Event::default().data("[DONE]")),
-        ]);
-        return Ok(Sse::new(stream).into_response());
+        let resp = rb
+            .send()
+            .await
+            .map_err(|e| ProxyError::Upstream(e.to_string()))?;
+        let status = resp.status();
+        let response = Response::builder()
+            .status(status.as_u16())
+            .header("content-type", "text/event-stream")
+            .header("cache-control", "no-cache")
+            .header("connection", "keep-alive")
+            .body(axum::body::Body::from_stream(resp.bytes_stream()))
+            .map_err(|e| ProxyError::Internal(e.to_string()))?;
+        return Ok(response);
     }
 
     let resp = rb

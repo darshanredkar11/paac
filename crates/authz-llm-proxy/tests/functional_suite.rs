@@ -11,17 +11,26 @@ use authz_policy::{LocalEd25519Signer, PolicyStore};
 use axum::routing::{get, post};
 use axum::Router;
 use serde_json::json;
+use axum::response::{sse::Event, IntoResponse, Sse};
 use tower::ServiceExt;
 
 async fn spawn_mock_llm() -> (SocketAddr, tokio::task::JoinHandle<()>) {
     let app = Router::new().route(
         "/v1/chat/completions",
-        post(|| async move {
-            axum::Json(json!({
-                "id": "chatcmpl-func-test",
-                "object": "chat.completion",
-                "choices": [{"index":0, "message": {"role":"assistant","content":"mock llm response"}, "finish_reason":"stop"}]
-            }))
+        post(|axum::Json(req): axum::Json<serde_json::Value>| async move {
+            if req.get("stream").and_then(|v| v.as_bool()) == Some(true) {
+                let stream = futures_util::stream::iter(vec![
+                    Ok::<_, std::convert::Infallible>(Event::default().data("mock streaming token")),
+                    Ok(Event::default().data("[DONE]")),
+                ]);
+                Sse::new(stream).into_response()
+            } else {
+                axum::Json(json!({
+                    "id": "chatcmpl-func-test",
+                    "object": "chat.completion",
+                    "choices": [{"index":0, "message": {"role":"assistant","content":"mock llm response"}, "finish_reason":"stop"}]
+                })).into_response()
+            }
         }),
     );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -284,7 +293,7 @@ async fn test_sse_streaming_chat_completions() {
                 .body(axum::body::Body::from(
                     json!({
                         "model": "gpt-4o",
-                        "messages": [{"role": "user", "content": "hello"}],
+                        "messages": [{"role": "user", "content": "show alice travel expenses"}],
                         "stream": true
                     })
                     .to_string(),

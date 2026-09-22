@@ -55,6 +55,11 @@ resources:
     name: self_profile
     department: HR
     sensitivity: INTERNAL
+  - id: general.chat
+    kind: GENERAL_CHAT
+    name: general_chat
+    department: GENERAL
+    sensitivity: PUBLIC
 
 tools:
   - tool_name: sql_query

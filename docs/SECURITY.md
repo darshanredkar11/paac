@@ -1,6 +1,23 @@
 # PAAC Security Model & Threat Defense
 
-PAAC provides deterministic, out-of-band authorization for Large Language Model (LLM) applications. This document outlines the security threat model, cryptographic architecture, defense mechanisms, and production hardening guidelines.
+PAAC provides deterministic, out-of-band authorization for Large Language Model (LLM) applications. This document outlines the security threat model, semantic boundaries, cryptographic architecture, and production hardening guidelines.
+
+> 🔬 **Information-Theoretic Security Analysis**: For a mathematical proof of the semantic equivocation gap ($H(P \mid R_{prop}) > 0$), parameter entropy bounds, and non-interference guarantees, see [`SHANNON_SECURITY_ANALYSIS.md`](SHANNON_SECURITY_ANALYSIS.md).
+
+---
+
+## The Semantic Security Boundary
+
+It is critical to distinguish between **Natural Language Intent Proposal** and **Deterministic Policy Evaluation**:
+
+```
+User Prompt P ──► NL Extractor ──► AuthzRequest Proposal ──► Cedar Engine ──► ALLOW / DENY
+ (Untrusted)      (Semantic)         (No Authority)          (Deterministic)
+```
+
+1. **Cedar is Deterministic**: Given a structured `AuthzRequest`, AWS Cedar returns `ALLOW` or `DENY` with $100\%$ mathematical determinism.
+2. **NL Extraction is a Proposal Boundary**: Natural language is inherently high-entropy. The bridge maps prompts to structured candidate requests ($R_{prop}$); **it possesses zero authority to grant permissions**.
+3. **Defense-in-Depth**: Because of the semantic equivocation gap, security must be enforced at **both** the gateway prompt layer (Pre-Execution) and the tool/database parameter execution boundary (Post-Generation).
 
 ---
 

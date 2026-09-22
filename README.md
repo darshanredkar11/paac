@@ -1,10 +1,10 @@
 # PAAC — LLM Authorization Gateway
 
-> **Zero-Trust Security Gateway & AI Firewall for Enterprise LLMs & RAG Applications**
+> **Out-of-Band Policy Gateway & Tool Access Control for Enterprise LLMs**
 
-[![Build & Test](https://img.shields.io/badge/build-passing-brightgreen)](#tests) [![Engine](https://img.shields.io/badge/engine-AWS%20Cedar-blue)](#crate-map) [![Latency](https://img.shields.io/badge/latency-%3C1ms-success)](#performance-notes)
+[![Build & Test](https://img.shields.io/badge/build-passing-brightgreen)](#tests) [![Engine](https://img.shields.io/badge/engine-AWS%20Cedar-blue)](#crate-map) [![Threat Model](https://img.shields.io/badge/threat--model-Shannon--Entropy-orange)](docs/SHANNON_SECURITY_ANALYSIS.md)
 
-📖 **Documentation**: [Executive & Product Overview](docs/PRODUCT_OVERVIEW.md) · [Architecture Guide](docs/ARCHITECTURE.md) · [Integration Guide](docs/INTEGRATION_GUIDE.md) · [Policy Guide](docs/POLICY_GUIDE.md) · [Security Model](docs/SECURITY.md)
+📖 **Documentation**: [Executive & Product Overview](docs/PRODUCT_OVERVIEW.md) · [Information-Theoretic Security Analysis](docs/SHANNON_SECURITY_ANALYSIS.md) · [Architecture Guide](docs/ARCHITECTURE.md) · [Integration Guide](docs/INTEGRATION_GUIDE.md) · [Policy Guide](docs/POLICY_GUIDE.md) · [Security Model](docs/SECURITY.md)
 
 ---
 

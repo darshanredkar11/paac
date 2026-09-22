@@ -30,10 +30,10 @@ When companies build AI features on top of internal data (RAG, databases, ERPs),
 
 | Feature | Without PAAC | With PAAC |
 | :--- | :--- | :--- |
-| **Data Protection** | Risk of prompt injection leaking sensitive CEO salaries, financials, or PII. | **Zero-Trust Enforcement**. Blocked at gateway level before LLM reads data. |
-| **Audit & Compliance** | Vague LLM text logs; hard to prove to auditors who accessed what. | **Cryptographic Evidence**. Every ALLOW/DENY decision logs signed decision IDs. |
+| **Data Protection** | Risk of prompt injection leaking sensitive CEO salaries, financials, or PII. | **Out-of-Band Policy Enforcement**. Evaluates prompts & tool calls against AWS Cedar. |
+| **Audit & Evidence** | Vague LLM text logs; hard to prove to auditors who accessed what. | **Decision Evidence Index**. Every ALLOW/DENY decision logs structured evidence IDs & matched policy rules. |
 | **Access Policy Control** | Code hardcoded in microservices or prompt instructions. | **Centralized Cedar Policies**. Human-readable DSL version-controlled & Ed25519 signed. |
-| **Performance** | High latency if calling external policy webhooks. | **Sub-millisecond (<1ms)** in-memory Cedar policy evaluation. |
+| **Performance** | High latency if calling external policy webhooks. | **Low-Latency In-Memory Evaluation**. Atomic lock-free `ArcSwap` policy sets. |
 
 ---
 

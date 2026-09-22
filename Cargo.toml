@@ -32,7 +32,7 @@ version = "0.2.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 authors = ["PAAC Contributors"]
-repository = "https://github.com/example/paac"
+repository = "https://github.com/darshanredkar/paac"
 description = "PAAC — LLM Authorization Gateway for company RBAC"
 
 [workspace.dependencies]
